@@ -141,7 +141,7 @@ def get_checks(platform: Platform) -> list[CheckResult]:
         results.append(
             run_check(
                 f"Overlay: {overlay.name}",
-                f"ls /boot/overlay-user/{overlay.id}.dtbo 2>/dev/null && echo 'Installed' || echo 'Not installed'",
+                f"test -f /boot/overlay-user/{overlay.id}.dtbo && echo 'Installed' || echo 'Not installed'",
             )
         )
 

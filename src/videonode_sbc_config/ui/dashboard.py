@@ -77,10 +77,14 @@ def _build_components_table(
 
     for comp in components:
         _status, message = _compute_component_status(comp, results)
+        if message == "Installed":
+            status_text = "[green]Installed[/green]"
+        else:
+            status_text = f"[dim]{message}[/dim]"
         table.add_row(
             f"[{comp.key}]",
             comp.name,
-            f"[dim]{message}[/dim]",
+            status_text,
             comp.help_text,
         )
 
@@ -167,16 +171,17 @@ def _run_overlay_submenu(platform: Platform, console: Console) -> None:
 
             # Find status from results
             check_name = f"Overlay: {overlay.name}"
-            status = "Not installed"
+            installed = False
             for r in results:
                 if r.name == check_name:
-                    status = r.message
+                    installed = r.message == "Installed"
                     break
 
+            status_text = "[green]Installed[/green]" if installed else "[dim]Not installed[/dim]"
             table.add_row(
                 f"[{key}]",
                 overlay.name,
-                f"[dim]{status}[/dim]",
+                status_text,
                 overlay.description,
             )
 
