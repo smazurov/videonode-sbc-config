@@ -5,57 +5,50 @@ This module uses armbian-add-overlay to apply device tree overlays.
 The overlay content is defined in hardware/<soc>/overlays.py.
 
 Usage:
-    pyinfra @local deploys/os/armbian/kernel_overlays.py
+    pyinfra @local deploys/os/armbian/kernel_overlays.py --data overlay_id=usb-host-mode
 """
 
 from io import StringIO
-from typing import TYPE_CHECKING
 
 from pyinfra.context import host
 from pyinfra.facts.files import File
 from pyinfra.operations import files, server
 
-if TYPE_CHECKING:
-    pass
-
-from videonode_sbc_config.deploys.hardware.rockchip.overlays import (
-    OVERLAYS,
-    get_overlays_for_board,
-)
+from videonode_sbc_config.deploys.hardware.rockchip.overlays import get_overlay
 
 ARMBIAN_ADD_OVERLAY = "/usr/sbin/armbian-add-overlay"
 ARMBIAN_ENV_TXT = "/boot/armbianEnv.txt"
 
 
-def apply_overlay(name: str, content: str) -> None:
+def apply_overlay(overlay_id: str, dts_content: str) -> None:
     """Apply a device tree overlay using armbian-add-overlay."""
-    dts_path = f"/tmp/{name}.dts"
+    dts_path = f"/tmp/{overlay_id}.dts"
 
     files.put(
-        name=f"Create {name} overlay",
-        src=StringIO(content),
+        name=f"Create {overlay_id} overlay",
+        src=StringIO(dts_content),
         dest=dts_path,
         mode="644",
     )
 
     server.shell(
-        name=f"Apply {name} overlay with armbian-add-overlay",
+        name=f"Apply {overlay_id} overlay with armbian-add-overlay",
         commands=[f"armbian-add-overlay {dts_path}"],
         _sudo=True,
     )
 
     # Add overlay to armbianEnv.txt for boot loading
     server.shell(
-        name=f"Enable {name} overlay at boot",
+        name=f"Enable {overlay_id} overlay at boot",
         commands=[
-            f"grep -q '^user_overlays=' {ARMBIAN_ENV_TXT} && sed -i '/^user_overlays=/s/$/ {name}/' {ARMBIAN_ENV_TXT} || echo 'user_overlays={name}' >> {ARMBIAN_ENV_TXT}",
+            f"grep -q '^user_overlays=' {ARMBIAN_ENV_TXT} && sed -i '/^user_overlays=/s/$/ {overlay_id}/' {ARMBIAN_ENV_TXT} || echo 'user_overlays={overlay_id}' >> {ARMBIAN_ENV_TXT}",
             f"sed -i 's/user_overlays=\\s*/user_overlays=/' {ARMBIAN_ENV_TXT}",
         ],
         _sudo=True,
     )
 
     files.file(
-        name=f"Clean up {name} overlay source",
+        name=f"Clean up {overlay_id} overlay source",
         path=dts_path,
         present=False,
     )
@@ -71,15 +64,18 @@ if not has_armbian_overlay:
     print("If missing, you may need to reinstall Armbian or check your installation.")
     exit(1)
 
-# Get board from pyinfra data (passed via --data board=xxx)
-board: str = host.data.get("board") or ""
-overlays_to_apply = get_overlays_for_board(board)
+# Get overlay_id from pyinfra data (passed via --data overlay_id=xxx)
+overlay_id: str = host.data.get("overlay_id") or ""
 
-print(f"Board: {board or '(unknown)'}")
-print(f"Applying overlays: {', '.join(overlays_to_apply)}")
+if not overlay_id:
+    print("ERROR: No overlay_id specified. Use --data overlay_id=<id>")
+    exit(1)
 
-for overlay_name in overlays_to_apply:
-    if overlay_name in OVERLAYS:
-        apply_overlay(overlay_name, OVERLAYS[overlay_name])
+overlay = get_overlay(overlay_id)
+if not overlay:
+    print(f"ERROR: Unknown overlay: {overlay_id}")
+    exit(1)
 
+print(f"Installing overlay: {overlay.name}")
+apply_overlay(overlay.id, overlay.dts)
 print("Reboot required for overlay changes to take effect")

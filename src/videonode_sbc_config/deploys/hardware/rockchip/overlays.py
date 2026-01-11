@@ -3,10 +3,29 @@ RK3588 device tree overlay definitions.
 
 This module contains the DTS content for various RK3588 hardware configurations.
 The actual application of overlays is OS-specific (see os/armbian/kernel_overlays.py).
+
+To add a new overlay:
+1. Add entry to OVERLAYS dict with id, name, description, and dts content
+2. Optionally add to DEFAULT_OVERLAYS or BOARD_OVERLAYS
 """
 
-# USB OTG port in host mode overlay
-USB_HOST_MODE_DTS = """/dts-v1/;
+from dataclasses import dataclass
+
+
+@dataclass
+class Overlay:
+    id: str
+    name: str
+    description: str
+    dts: str
+
+
+OVERLAYS: list[Overlay] = [
+    Overlay(
+        id="usb-host-mode",
+        name="USB host mode",
+        description="Force USB OTG port to host mode",
+        dts="""/dts-v1/;
 /plugin/;
 
 / {
@@ -21,10 +40,13 @@ USB_HOST_MODE_DTS = """/dts-v1/;
         };
     };
 };
-"""
-
-# Disable HDMI receiver overlay (stops error spam)
-DISABLE_HDMIRX_DTS = """/dts-v1/;
+""",
+    ),
+    Overlay(
+        id="disable-hdmirx",
+        name="Disable HDMI RX",
+        description="Disable HDMI receiver (stops error spam)",
+        dts="""/dts-v1/;
 /plugin/;
 
 / {
@@ -37,26 +59,19 @@ DISABLE_HDMIRX_DTS = """/dts-v1/;
         };
     };
 };
-"""
-
-# Map of overlay name -> DTS content
-OVERLAYS: dict[str, str] = {
-    "usb-host-mode": USB_HOST_MODE_DTS,
-    "disable-hdmirx": DISABLE_HDMIRX_DTS,
-}
-
-# Base overlays applied to all RK3588 boards
-BASE_OVERLAYS: list[str] = ["disable-hdmirx"]
-
-# Board-specific overlays (exact match on Armbian BOARD identifier)
-BOARD_OVERLAYS: dict[str, list[str]] = {
-    "orangepi5ultra": ["usb-host-mode"],
-}
+""",
+    ),
+]
 
 
-def get_overlays_for_board(board: str) -> list[str]:
-    """Get overlay list for a specific board."""
-    overlays = list(BASE_OVERLAYS)
-    if board in BOARD_OVERLAYS:
-        overlays.extend(BOARD_OVERLAYS[board])
-    return overlays
+def get_overlay(overlay_id: str) -> Overlay | None:
+    """Get overlay by ID."""
+    for overlay in OVERLAYS:
+        if overlay.id == overlay_id:
+            return overlay
+    return None
+
+
+def get_overlay_ids() -> list[str]:
+    """Get list of all overlay IDs."""
+    return [o.id for o in OVERLAYS]

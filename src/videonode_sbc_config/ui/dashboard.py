@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from videonode_sbc_config.deploys.hardware.rockchip.overlays import OVERLAYS
 from videonode_sbc_config.deploys.verify import CheckResult, CheckStatus, run_all_checks
 from videonode_sbc_config.platform import Platform
 
@@ -25,19 +26,32 @@ STATUS_ICONS = {
 
 def _compute_component_status(
     component: InstallableComponent, results: list[CheckResult]
-) -> CheckStatus:
+) -> tuple[CheckStatus, str]:
+    """Compute component status and message.
+
+    Returns (status, message) where status is always INFO for neutral display.
+    """
+    if component.has_submenu:
+        # For overlay submenu, count installed overlays
+        installed = sum(
+            1
+            for r in results
+            if r.name.startswith("Overlay:") and r.message == "Installed"
+        )
+        total = len(OVERLAYS)
+        return CheckStatus.INFO, f"{installed}/{total}"
+
     check_map = {r.name: r for r in results}
     statuses = []
     for check_name in component.checks:
         if check_name in check_map:
             statuses.append(check_map[check_name].status)
+
     if not statuses:
-        return CheckStatus.SKIP
-    if any(s == CheckStatus.FAIL for s in statuses):
-        return CheckStatus.FAIL
-    if all(s == CheckStatus.PASS for s in statuses):
-        return CheckStatus.PASS
-    return CheckStatus.INFO
+        return CheckStatus.INFO, "-"
+
+    all_pass = all(s == CheckStatus.PASS for s in statuses)
+    return CheckStatus.INFO, "Installed" if all_pass else "Not installed"
 
 
 def _build_platform_panel(platform: Platform) -> Panel:
@@ -58,15 +72,15 @@ def _build_components_table(
     table = Table(show_header=True, header_style="bold", box=None)
     table.add_column("#", style="cyan", width=3)
     table.add_column("Component", min_width=18)
-    table.add_column("Status", justify="center", width=6)
+    table.add_column("Status", justify="center", width=14)
     table.add_column("Description", min_width=20)
 
     for comp in components:
-        status = _compute_component_status(comp, results)
+        _status, message = _compute_component_status(comp, results)
         table.add_row(
             f"[{comp.key}]",
             comp.name,
-            STATUS_ICONS[status],
+            f"[dim]{message}[/dim]",
             comp.help_text,
         )
 
@@ -86,8 +100,12 @@ def _build_system_info_table(
     table.add_column("Details", min_width=20)
 
     for check in results:
-        if check.name not in component_check_names:
-            table.add_row(check.name, STATUS_ICONS[check.status], check.message)
+        # Skip component checks and overlay checks (handled by submenu)
+        if check.name in component_check_names:
+            continue
+        if check.name.startswith("Overlay:"):
+            continue
+        table.add_row(check.name, STATUS_ICONS[check.status], check.message)
 
     return Panel(table, title="System Info")
 
@@ -111,8 +129,6 @@ def _run_install(
         console.print(f"[dim]Running {script}...[/dim]")
         path = deploys.joinpath(script)
         cmd = ["pyinfra", "@local", str(path)]
-        if "kernel_overlays" in script and platform.board:
-            cmd.extend(["--data", f"board={platform.board}"])
         result = subprocess.run(cmd)
         if result.returncode != 0:
             console.print(
@@ -125,6 +141,73 @@ def _run_install(
     console.print(f"\n[green]{component.name} installed successfully[/green]")
     console.print("\n[dim]Press any key to continue...[/dim]")
     readchar.readkey()
+
+
+def _run_overlay_submenu(platform: Platform, console: Console) -> None:
+    """Show overlay selection submenu."""
+    deploys = files("videonode_sbc_config.deploys")
+
+    while True:
+        console.clear()
+        results = run_all_checks(platform)
+
+        console.print(Panel("Select an overlay to install", title="Kernel Overlays"))
+        console.print()
+
+        table = Table(show_header=True, header_style="bold", box=None)
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("Overlay", min_width=20)
+        table.add_column("Status", justify="center", width=14)
+        table.add_column("Description", min_width=30)
+
+        overlay_map: dict[str, str] = {}
+        for i, overlay in enumerate(OVERLAYS, 1):
+            key = str(i)
+            overlay_map[key] = overlay.id
+
+            # Find status from results
+            check_name = f"Overlay: {overlay.name}"
+            status = "Not installed"
+            for r in results:
+                if r.name == check_name:
+                    status = r.message
+                    break
+
+            table.add_row(
+                f"[{key}]",
+                overlay.name,
+                f"[dim]{status}[/dim]",
+                overlay.description,
+            )
+
+        console.print(table)
+        console.print()
+        console.print(Text(f"Press 1-{len(OVERLAYS)} to install, b to go back", style="dim"))
+
+        try:
+            key = readchar.readkey()
+        except KeyboardInterrupt:
+            return
+
+        if key in ("b", "B", "\x1b"):  # b or Escape
+            return
+
+        if key in overlay_map:
+            overlay_id = overlay_map[key]
+            console.clear()
+            console.print(f"\n[bold cyan]Installing overlay: {overlay_id}...[/bold cyan]\n")
+
+            path = deploys.joinpath("os/armbian/kernel_overlays.py")
+            cmd = ["pyinfra", "@local", str(path), "--data", f"overlay_id={overlay_id}"]
+            result = subprocess.run(cmd)
+
+            if result.returncode != 0:
+                console.print(f"[red]Failed with code {result.returncode}[/red]")
+            else:
+                console.print("\n[green]Overlay installed (reboot required)[/green]")
+
+            console.print("\n[dim]Press any key to continue...[/dim]")
+            readchar.readkey()
 
 
 def render_dashboard(
@@ -209,4 +292,8 @@ def run_interactive(platform: Platform) -> None:
             sys.exit(0)
 
         if key in component_map:
-            _run_install(component_map[key], platform, console)
+            comp = component_map[key]
+            if comp.has_submenu:
+                _run_overlay_submenu(platform, console)
+            else:
+                _run_install(comp, platform, console)

@@ -1,6 +1,6 @@
 """Installable component definitions for the interactive dashboard."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -8,8 +8,9 @@ class InstallableComponent:
     key: str
     name: str
     help_text: str
-    scripts: list[str]
-    checks: list[str]
+    scripts: list[str] = field(default_factory=list)
+    checks: list[str] = field(default_factory=list)
+    has_submenu: bool = False
 
 
 ROCKCHIP_ARMBIAN_COMPONENTS: list[InstallableComponent] = [
@@ -34,9 +35,8 @@ ROCKCHIP_ARMBIAN_COMPONENTS: list[InstallableComponent] = [
     InstallableComponent(
         key="3",
         name="Kernel overlays",
-        help_text="USB host mode, HDMI RX",
-        scripts=["os/armbian/kernel_overlays.py"],
-        checks=["USB host overlay", "Boot config overlays"],
+        help_text="Device tree overlays",
+        has_submenu=True,
     ),
     InstallableComponent(
         key="4",

@@ -1,5 +1,6 @@
 """Verification checks for Rockchip SBCs on Armbian."""
 
+from videonode_sbc_config.deploys.hardware.rockchip.overlays import OVERLAYS
 from videonode_sbc_config.platform import Platform
 
 from .runner import run_check
@@ -135,35 +136,14 @@ def get_checks(platform: Platform) -> list[CheckResult]:
         )
     )
 
-    # USB host overlay
-    results.append(
-        run_check(
-            "USB host overlay",
-            "ls /boot/overlay-user/usb-host-mode.dtbo 2>/dev/null && echo 'installed' || echo 'missing'",
-            lambda x: "installed" in x,
-            pass_msg="Installed",
-            fail_msg="Not installed",
+    # Kernel overlays (dynamic from OVERLAYS list)
+    for overlay in OVERLAYS:
+        results.append(
+            run_check(
+                f"Overlay: {overlay.name}",
+                f"ls /boot/overlay-user/{overlay.id}.dtbo 2>/dev/null && echo 'Installed' || echo 'Not installed'",
+            )
         )
-    )
-
-    # HDMI RX disable overlay (informational only)
-    results.append(
-        run_check(
-            "HDMI RX overlay",
-            "ls /boot/overlay-user/disable-hdmirx.dtbo 2>/dev/null && echo 'Installed' || echo 'Not installed'",
-        )
-    )
-
-    # Overlays in boot config
-    results.append(
-        run_check(
-            "Boot config overlays",
-            "grep '^user_overlays=' /boot/armbianEnv.txt 2>/dev/null || echo 'none'",
-            lambda x: "usb-host-mode" in x if x != "none" else False,
-            pass_msg="Configured",
-            fail_msg="Missing in armbianEnv.txt",
-        )
-    )
 
     # Cockpit web UI
     results.append(
