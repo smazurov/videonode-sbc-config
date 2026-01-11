@@ -77,7 +77,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: x == "none",
             pass_msg="Disabled",
             fail_msg="LED is on",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -89,7 +88,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: x == "none",
             pass_msg="Disabled",
             fail_msg="LED is on",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -101,7 +99,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: int(x) >= 2 if x.isdigit() else False,
             pass_msg="{result}",
             fail_msg="{result}",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -113,7 +110,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: x.startswith("crw-rw-rw-") if x != "missing" else False,
             pass_msg="666",
             fail_msg="Needs fix",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -125,7 +121,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: x.startswith("crw-rw-rw-") if x != "missing" else False,
             pass_msg="666",
             fail_msg="Needs fix",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -137,7 +132,6 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: x.startswith("crw-rw-rw-") if x != "missing" else False,
             pass_msg="666",
             fail_msg="Needs fix",
-            remediation="videonode-sbc-config setup",
         )
     )
 
@@ -149,19 +143,14 @@ def get_checks(platform: Platform) -> list[CheckResult]:
             lambda x: "installed" in x,
             pass_msg="Installed",
             fail_msg="Not installed",
-            remediation="videonode-sbc-config setup",
         )
     )
 
-    # HDMI RX disable overlay
+    # HDMI RX disable overlay (informational only)
     results.append(
         run_check(
             "HDMI RX overlay",
-            "ls /boot/overlay-user/disable-hdmirx.dtbo 2>/dev/null && echo 'installed' || echo 'missing'",
-            lambda x: "installed" in x,
-            pass_msg="Installed",
-            fail_msg="Not installed",
-            remediation="videonode-sbc-config setup",
+            "ls /boot/overlay-user/disable-hdmirx.dtbo 2>/dev/null && echo 'Installed' || echo 'Not installed'",
         )
     )
 
@@ -170,12 +159,20 @@ def get_checks(platform: Platform) -> list[CheckResult]:
         run_check(
             "Boot config overlays",
             "grep '^user_overlays=' /boot/armbianEnv.txt 2>/dev/null || echo 'none'",
-            lambda x: "usb-host-mode" in x and "disable-hdmirx" in x
-            if x != "none"
-            else False,
+            lambda x: "usb-host-mode" in x if x != "none" else False,
             pass_msg="Configured",
             fail_msg="Missing in armbianEnv.txt",
-            remediation="videonode-sbc-config setup",
+        )
+    )
+
+    # Cockpit web UI
+    results.append(
+        run_check(
+            "Cockpit",
+            "systemctl is-active cockpit.socket 2>/dev/null || echo 'inactive'",
+            lambda x: x == "active",
+            pass_msg="Running",
+            fail_msg="Not installed",
         )
     )
 

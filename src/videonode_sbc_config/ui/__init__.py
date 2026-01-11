@@ -1,5 +1,5 @@
 """UI rendering module."""
 
-from .dashboard import render_dashboard
+from .dashboard import render_dashboard, run_interactive
 
-__all__ = ["render_dashboard"]
+__all__ = ["render_dashboard", "run_interactive"]

@@ -1,77 +1,20 @@
-import subprocess
-from importlib.resources import files
+import json as json_module
+import sys
 
 import click
 
 from videonode_sbc_config.platform import detect_platform
 
 
-@click.group()
-def main():
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx: click.Context) -> None:
     """SBC configuration for videonode streaming."""
-    pass
+    if ctx.invoked_subcommand is None:
+        from videonode_sbc_config.ui import run_interactive
 
-
-@main.command()
-@click.option("--board", default=None, help="Override detected board identifier")
-def setup(board: str | None):
-    """Run full hardware setup for detected platform."""
-    platform = detect_platform()
-    effective_board = board or platform.board
-    click.echo(f"Detected platform: {platform}")
-    if board:
-        click.echo(f"Board override: {board}")
-
-    if not platform.is_rockchip:
-        raise click.ClickException(
-            f"Unsupported SBC family: {platform.sbc_family.name}. "
-            "Only Rockchip is currently supported."
-        )
-    if not platform.is_armbian:
-        raise click.ClickException(
-            f"Unsupported OS: {platform.os_type.name}. "
-            "Only Armbian is currently supported."
-        )
-
-    deploys = files("videonode_sbc_config.deploys")
-    scripts = [
-        "hardware/rockchip/stack.py",
-        "hardware/rockchip/permissions.py",
-        "os/armbian/kernel_overlays.py",
-        "generic/cockpit.py",
-    ]
-    for script in scripts:
-        path = deploys.joinpath(script)
-        click.echo(f"Running {script}...")
-        cmd = ["pyinfra", "@local", str(path)]
-        if script == "os/armbian/kernel_overlays.py":
-            cmd.extend(["--data", f"board={effective_board}"])
-        subprocess.run(cmd, check=True)
-    click.echo("Setup complete. Reboot required for kernel overlays.")
-
-
-@main.command()
-@click.option("--token", required=True, help="Grafana Cloud API token")
-@click.option("--username", required=True, help="Grafana Cloud username/user ID")
-@click.option("--url", required=True, help="Grafana Cloud Prometheus push URL")
-def alloy(token, username, url):
-    """Setup Grafana Alloy metrics collection."""
-    deploys = files("videonode_sbc_config.deploys")
-    path = deploys.joinpath("generic/alloy.py")
-    subprocess.run(
-        [
-            "pyinfra",
-            "@local",
-            str(path),
-            "--data",
-            f"grafana_cloud_token={token}",
-            "--data",
-            f"grafana_cloud_username={username}",
-            "--data",
-            f"grafana_cloud_url={url}",
-        ],
-        check=True,
-    )
+        platform = detect_platform()
+        run_interactive(platform)
 
 
 @main.command()
@@ -79,10 +22,8 @@ def alloy(token, username, url):
     "--verbose", "-v", is_flag=True, help="Show remediation hints for failures"
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def status(verbose: bool, as_json: bool):
-    """Show SBC configuration status."""
-    import json as json_module
-
+def status(verbose: bool, as_json: bool) -> None:
+    """Show SBC configuration status (non-interactive)."""
     from videonode_sbc_config.deploys.verify import CheckStatus, run_all_checks
     from videonode_sbc_config.ui import render_dashboard
 
@@ -114,7 +55,34 @@ def status(verbose: bool, as_json: bool):
         render_dashboard(platform, results, verbose=verbose)
 
     failed = sum(1 for r in results if r.status == CheckStatus.FAIL)
-    raise SystemExit(failed)
+    sys.exit(failed)
+
+
+@main.command()
+@click.option("--token", required=True, help="Grafana Cloud API token")
+@click.option("--username", required=True, help="Grafana Cloud username/user ID")
+@click.option("--url", required=True, help="Grafana Cloud Prometheus push URL")
+def alloy(token: str, username: str, url: str) -> None:
+    """Setup Grafana Alloy metrics collection."""
+    import subprocess
+    from importlib.resources import files
+
+    deploys = files("videonode_sbc_config.deploys")
+    path = deploys.joinpath("generic/alloy.py")
+    subprocess.run(
+        [
+            "pyinfra",
+            "@local",
+            str(path),
+            "--data",
+            f"grafana_cloud_token={token}",
+            "--data",
+            f"grafana_cloud_username={username}",
+            "--data",
+            f"grafana_cloud_url={url}",
+        ],
+        check=True,
+    )
 
 
 if __name__ == "__main__":
