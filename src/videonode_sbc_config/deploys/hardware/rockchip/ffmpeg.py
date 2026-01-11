@@ -34,13 +34,6 @@ ffmpeg_installed = host.get_fact(File, "/usr/bin/ffmpeg")
 
 
 if REBUILD or not ffmpeg_installed:
-    # Remove existing FFmpeg directory to ensure clean state for rebuild
-    if REBUILD:
-        files.directory(
-            name="Remove existing FFmpeg directory for rebuild",
-            path=BUILD_DIR,
-            present=False,
-        )
     # Install build dependencies using pyinfra apt operations
     apt.packages(
         name="Install FFmpeg build dependencies",
@@ -56,12 +49,20 @@ if REBUILD or not ffmpeg_installed:
         path=BUILD_BASE,
     )
 
-    # Clone FFmpeg repository using shell command to avoid pyinfra git.repo issues
+    # Remove existing directory for clean state
+    files.directory(
+        name="Remove existing FFmpeg directory if present",
+        path=BUILD_DIR,
+        present=False,
+    )
+
+    # Shallow clone FFmpeg repository at specific branch
     server.shell(
         name="Clone FFmpeg Rockchip repository",
         commands=[
-            f"[ -d {BUILD_DIR} ] || git clone -b 7.1 https://github.com/nyanmisaka/ffmpeg-rockchip.git {BUILD_DIR}"
+            f"git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockchip.git {BUILD_DIR}"
         ],
+        _ignore_errors=False,
     )
 
     # Configure FFmpeg

@@ -9,7 +9,7 @@ Usage:
 from typing import TYPE_CHECKING
 
 from pyinfra.context import host
-from pyinfra.operations import apt, server, files, git
+from pyinfra.operations import apt, files, server
 from pyinfra.facts.files import File
 from pyinfra.facts.server import Home
 
@@ -56,20 +56,13 @@ if REBUILD or not mpp_installed:
         present=False,
     )
 
-    # Clone MPP repository
-    git.repo(
-        name="Clone Rockchip MPP repository",
-        src="https://github.com/rockchip-linux/mpp.git",
-        dest=BUILD_DIR,
-    )
-
-    # Fetch tags and checkout specific version
+    # Shallow clone MPP repository at specific tag (HermanChen fork with fixes)
     server.shell(
-        name="Checkout MPP version 1.0.10",
+        name="Clone Rockchip MPP repository",
         commands=[
-            f"cd {BUILD_DIR} && git fetch --tags --all",
-            f"cd {BUILD_DIR} && git checkout tags/1.0.10",
+            f"git clone --depth 1 --branch 1.0.10 https://github.com/HermanChen/mpp.git {BUILD_DIR}"
         ],
+        _ignore_errors=False,
     )
 
     # Create build directory

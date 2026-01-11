@@ -56,12 +56,13 @@ if REBUILD or not rga_installed:
         present=False,
     )
 
-    # Clone RGA repository with depth=1 and specific branch
+    # Shallow clone RGA repository at specific branch
     server.shell(
-        name="Shallow Clone Rockchip RGA repository",
+        name="Clone Rockchip RGA repository",
         commands=[
-            f"git clone --depth=1 --branch jellyfin-rga https://github.com/nyanmisaka/rk-mirrors.git {BUILD_DIR}"
+            f"git clone --depth 1 --branch jellyfin-rga https://github.com/nyanmisaka/rk-mirrors.git {BUILD_DIR}"
         ],
+        _ignore_errors=False,
     )
 
     # Configure RGA with meson (creates build directory inside rkrga)
