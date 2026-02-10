@@ -127,22 +127,30 @@ def _run_install(
     console.clear()
     console.print(f"\n[bold cyan]Installing {component.name}...[/bold cyan]\n")
 
-    deploys = files("videonode_sbc_config.deploys")
+    if component.deploy_fn:
+        try:
+            component.deploy_fn()
+            console.print(f"\n[green]{component.name} installed successfully[/green]")
+        except Exception as e:
+            console.print(f"[red]Installation failed: {e}[/red]")
+    else:
+        # Fallback to subprocess for backwards compatibility
+        deploys = files("videonode_sbc_config.deploys")
+        for script in component.scripts:
+            console.print(f"[dim]Running {script}...[/dim]")
+            path = deploys.joinpath(script)
+            cmd = ["pyinfra", "@local", str(path)]
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                console.print(
+                    f"[red]Script {script} failed with code {result.returncode}[/red]"
+                )
+                console.print("\n[dim]Press any key to continue...[/dim]")
+                readchar.readkey()
+                return
 
-    for script in component.scripts:
-        console.print(f"[dim]Running {script}...[/dim]")
-        path = deploys.joinpath(script)
-        cmd = ["pyinfra", "@local", str(path)]
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            console.print(
-                f"[red]Script {script} failed with code {result.returncode}[/red]"
-            )
-            console.print("\n[dim]Press any key to continue...[/dim]")
-            readchar.readkey()
-            return
+        console.print(f"\n[green]{component.name} installed successfully[/green]")
 
-    console.print(f"\n[green]{component.name} installed successfully[/green]")
     console.print("\n[dim]Press any key to continue...[/dim]")
     readchar.readkey()
 
@@ -177,7 +185,9 @@ def _run_overlay_submenu(platform: Platform, console: Console) -> None:
                     installed = r.message == "Installed"
                     break
 
-            status_text = "[green]Installed[/green]" if installed else "[dim]Not installed[/dim]"
+            status_text = (
+                "[green]Installed[/green]" if installed else "[dim]Not installed[/dim]"
+            )
             table.add_row(
                 f"[{key}]",
                 overlay.name,
@@ -187,7 +197,9 @@ def _run_overlay_submenu(platform: Platform, console: Console) -> None:
 
         console.print(table)
         console.print()
-        console.print(Text(f"Press 1-{len(OVERLAYS)} to install, b to go back", style="dim"))
+        console.print(
+            Text(f"Press 1-{len(OVERLAYS)} to install, b to go back", style="dim")
+        )
 
         try:
             key = readchar.readkey()
@@ -200,7 +212,9 @@ def _run_overlay_submenu(platform: Platform, console: Console) -> None:
         if key in overlay_map:
             overlay_id = overlay_map[key]
             console.clear()
-            console.print(f"\n[bold cyan]Installing overlay: {overlay_id}...[/bold cyan]\n")
+            console.print(
+                f"\n[bold cyan]Installing overlay: {overlay_id}...[/bold cyan]\n"
+            )
 
             path = deploys.joinpath("os/armbian/kernel_overlays.py")
             cmd = ["pyinfra", "@local", str(path), "--data", f"overlay_id={overlay_id}"]
