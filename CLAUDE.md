@@ -65,6 +65,48 @@ Pyinfra scripts run with `@local` connector. Organization:
 - `hardware/<family>/` - SBC-specific acceleration (MPP/RGA for Rockchip)
 - `verify/` - Platform-specific verification checks
 
+### Deploy Pattern
+
+Use `@deploy` decorator with operation chaining via `_if`:
+
+```python
+from pyinfra.api.deploy import deploy
+from pyinfra.context import host
+from pyinfra.operations import apt, server
+
+@deploy("Install Something")
+def install_something() -> None:
+    deps = apt.packages(
+        name="Install dependencies",
+        packages=["build-essential", "cmake"],
+        update=True,
+    )
+
+    clone = server.shell(
+        name="Clone repository",
+        commands=["git clone --depth 1 https://example.com/repo.git /tmp/repo"],
+        _if=deps.did_succeed,
+        _retries=2,  # type: ignore[call-arg]
+        _retry_delay=5,  # type: ignore[call-arg]
+    )
+
+    server.shell(
+        name="Build and install",
+        commands=["cd /tmp/repo && make && make install"],
+        _if=clone.did_succeed,
+    )
+
+# Standalone execution
+if __name__ == "__main__":
+    install_something(_sudo=True)
+```
+
+Key points:
+- `_sudo=True` passed at deploy call level (cascades to all operations)
+- Chain operations with `_if=prev_op.did_succeed` or `_if=prev_op.did_change`
+- Use `_retries` and `_retry_delay` for network operations (git clone, downloads)
+- Scripts work standalone (`pyinfra @local script.py`) and as importable functions
+
 ## Git Commits
 
 Conventional format: `<type>(<scope>): <subject>`
