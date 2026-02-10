@@ -7,19 +7,13 @@ Usage:
 """
 
 from io import StringIO
-from typing import TYPE_CHECKING
 
+from pyinfra.api.deploy import deploy
 from pyinfra.context import host
 from pyinfra.facts.server import Command
 from pyinfra.operations import files, server
 
-if TYPE_CHECKING:
-    pass
-
-# Create comprehensive udev rules for all Rockchip devices
-files.put(
-    name="Setup Rockchip device permissions",
-    src=StringIO("""# Rockchip MPP (Media Process Platform)
+UDEV_RULES = """# Rockchip MPP (Media Process Platform)
 KERNEL=="mpp_service", MODE="0666", GROUP="video"
 KERNEL=="mpp-service", MODE="0666", GROUP="video"
 KERNEL=="vpu_service", MODE="0666", GROUP="video"
@@ -37,30 +31,34 @@ SUBSYSTEM=="dma_heap", MODE="0666", GROUP="video"
 KERNEL=="system", SUBSYSTEM=="dma_heap", MODE="0666", GROUP="video"
 KERNEL=="system-uncached", SUBSYSTEM=="dma_heap", MODE="0666", GROUP="video"
 KERNEL=="reserved", SUBSYSTEM=="dma_heap", MODE="0666", GROUP="video"
-"""),
-    dest="/etc/udev/rules.d/99-rockchip-permissions.rules",
-    mode="644",
-    _sudo=True,
-    _ignore_errors=False,
-)
+"""
 
-# Reload udev rules
-server.shell(
-    name="Reload udev rules",
-    commands=[
-        "udevadm control --reload-rules",
-        "udevadm trigger",
-    ],
-    _sudo=True,
-    _ignore_errors=False,
-)
 
-# Get the username for lingering setup
-USERNAME = host.get_fact(Command, command="whoami").strip()
+@deploy("Setup Rockchip permissions")
+def setup_permissions() -> None:
+    """Configure udev rules and user lingering for Rockchip hardware access."""
+    put_rules = files.put(
+        name="Setup Rockchip device permissions",
+        src=StringIO(UDEV_RULES),
+        dest="/etc/udev/rules.d/99-rockchip-permissions.rules",
+        mode="644",
+    )
 
-# Enable lingering so user services start at boot without login
-server.shell(
-    name="Enable lingering for user services to start at boot",
-    commands=[f"loginctl enable-linger {USERNAME}"],
-    _sudo=True,
-)
+    server.shell(
+        name="Reload udev rules",
+        commands=[
+            "udevadm control --reload-rules",
+            "udevadm trigger",
+        ],
+        _if=put_rules.did_change,
+    )
+
+    username = host.get_fact(Command, command="whoami").strip()
+    server.shell(
+        name="Enable lingering for user services to start at boot",
+        commands=[f"loginctl enable-linger {username}"],
+    )
+
+
+if __name__ == "__main__":
+    setup_permissions(_sudo=True)

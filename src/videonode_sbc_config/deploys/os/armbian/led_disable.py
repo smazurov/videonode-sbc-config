@@ -8,16 +8,12 @@ Usage:
 """
 
 from io import StringIO
-from typing import TYPE_CHECKING
 
+from pyinfra.api.deploy import deploy
 from pyinfra.context import host
-from pyinfra.operations import files, server, systemd
 from pyinfra.facts.files import File
+from pyinfra.operations import files, server, systemd
 
-if TYPE_CHECKING:
-    pass
-
-# Configuration
 SBC_LEDS = [
     {"name": "blue_led", "path": "/sys/class/leds/blue_led"},
     {"name": "green_led", "path": "/sys/class/leds/green_led"},
@@ -26,7 +22,7 @@ LED_CONFIG_FILE = "/etc/armbian-leds.conf"
 LED_RESTORE_SCRIPT = "/usr/lib/armbian/armbian-led-state-restore.sh"
 
 
-def generate_led_config() -> str:
+def _generate_led_config() -> str:
     """Generate LED configuration content."""
     config = "# SBC LED configuration - disabled by pyinfra\n"
     for led in SBC_LEDS:
@@ -38,7 +34,7 @@ trigger=none
     return config
 
 
-def generate_systemd_service() -> str:
+def _generate_systemd_service() -> str:
     """Generate systemd service content for LED restore."""
     return f"""[Unit]
 Description=Restore SBC LED state
@@ -56,30 +52,25 @@ WantedBy=sysinit.target
 """
 
 
+@deploy("Disable SBC LEDs")
 def disable_leds() -> None:
-    """Disable SBC LEDs."""
-    # Check if Armbian LED management exists
+    """Disable SBC LEDs and configure persistence."""
     armbian_exists = host.get_fact(File, path=LED_RESTORE_SCRIPT)
 
-    # Create LED state backup if Armbian scripts exist
     if armbian_exists:
         server.shell(
             name="Create LED state backup",
             commands=f"{LED_RESTORE_SCRIPT} {LED_CONFIG_FILE}.backup",
-            _sudo=True,
         )
 
-    # Create LED disable configuration
     files.put(
         name="Create LED disable configuration",
-        src=StringIO(generate_led_config()),
+        src=StringIO(_generate_led_config()),
         dest=LED_CONFIG_FILE,
         mode="0644",
         create_remote_dir=True,
-        _sudo=True,
     )
 
-    # Apply LED configuration immediately
     led_commands = []
     for led in SBC_LEDS:
         led_commands.extend(
@@ -94,32 +85,25 @@ def disable_leds() -> None:
     server.shell(
         name="Apply LED configuration",
         commands=led_commands,
-        _sudo=True,
     )
 
-    # Create LED restore systemd service
     files.put(
         name="Create LED restore systemd service",
-        src=StringIO(generate_systemd_service()),
+        src=StringIO(_generate_systemd_service()),
         dest="/etc/systemd/system/sbc-led-restore.service",
         mode="0644",
-        _sudo=True,
     )
 
-    # Reload systemd daemon
     systemd.daemon_reload(
         name="Reload systemd daemon",
-        _sudo=True,
     )
 
-    # Enable LED restore service
     systemd.service(
         name="Enable SBC LED restore service",
         service="sbc-led-restore",
         enabled=True,
-        _sudo=True,
     )
 
 
-# Main execution
-disable_leds()
+if __name__ == "__main__":
+    disable_leds(_sudo=True)

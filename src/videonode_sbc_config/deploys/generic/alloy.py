@@ -12,90 +12,27 @@ Usage:
 
 from io import StringIO
 from pathlib import Path
+
 from pyinfra import logger
+from pyinfra.api.deploy import deploy
 from pyinfra.context import host
-from pyinfra.operations import files, server
-from pyinfra.facts.server import Home, Command
 from pyinfra.facts.files import File
+from pyinfra.facts.server import Command, Home
+from pyinfra.operations import files, server
 
-# Get home directory and Grafana Cloud credentials
-USER_HOME = host.get_fact(Home)
-ALLOY_DIR = f"{USER_HOME}/alloy"
 ALLOY_VERSION = "v1.10.1"
-
-# Get Grafana Cloud config from pyinfra data
-GRAFANA_CLOUD_TOKEN = host.data.get("grafana_cloud_token")
-GRAFANA_CLOUD_USERNAME = host.data.get("grafana_cloud_username")
-GRAFANA_CLOUD_URL = host.data.get("grafana_cloud_url")
-
-if not all([GRAFANA_CLOUD_TOKEN, GRAFANA_CLOUD_USERNAME, GRAFANA_CLOUD_URL]):
-    logger.error(
-        "Missing Grafana Cloud config! Required --data args: "
-        "grafana_cloud_token, grafana_cloud_username, grafana_cloud_url"
-    )
-    exit(1)
-
-# Check for BSSID mappings file
 BSSID_MAPPINGS_FILE = Path(__file__).parent.parent.parent / "bssid_mappings.alloy"
-bssid_rules = ""
-wifi_forward_to = "prometheus.relabel.add_hostname.receiver"
 
-if BSSID_MAPPINGS_FILE.exists():
-    logger.info(f"Found BSSID mappings file at {BSSID_MAPPINGS_FILE}")
-    with open(BSSID_MAPPINGS_FILE, "r") as f:
-        bssid_rules = f.read()
-    # If we have BSSID rules, wifi metrics should forward to the enrichment first
-    wifi_forward_to = "prometheus.relabel.wifi_bssid_enrichment.receiver"
-else:
-    logger.info("No BSSID mappings file found, WiFi metrics won't have AP name labels")
 
-# Create Alloy directory
-files.directory(
-    name="Ensure Alloy directory exists",
-    path=ALLOY_DIR,
-)
-
-# Check if Alloy exists and get version
-alloy_file = host.get_fact(File, path=f"{ALLOY_DIR}/alloy")
-current_version = None
-if alloy_file:
-    version_output = host.get_fact(
-        Command,
-        command=f"{ALLOY_DIR}/alloy --version 2>/dev/null | awk '{{print $3}}' | head -1",
-    )
-    if version_output:
-        current_version = version_output.strip()
-
-# Download and install Alloy if needed
-if current_version == ALLOY_VERSION:
-    logger.info(f"Alloy {ALLOY_VERSION} already installed, skipping download")
-else:
-    # Download Alloy ARM64 binary
-    files.download(
-        name="Download Alloy ARM64 binary",
-        src=f"https://github.com/grafana/alloy/releases/download/{ALLOY_VERSION}/alloy-linux-arm64.zip",
-        dest="/tmp/alloy-linux-arm64.zip",
-    )
-
-    # Extract and install
-    server.shell(
-        name="Extract and install Alloy",
-        commands=[
-            "unzip -o /tmp/alloy-linux-arm64.zip -d /tmp",
-            f"mv /tmp/alloy-linux-arm64 {ALLOY_DIR}/alloy",
-            f"chmod +x {ALLOY_DIR}/alloy",
-        ],
-    )
-
-    # Clean up
-    files.file(
-        name="Remove Alloy archive",
-        path="/tmp/alloy-linux-arm64.zip",
-        present=False,
-    )
-
-# Create Alloy configuration
-alloy_config_content = f"""
+def _get_alloy_config(
+    grafana_cloud_url: str,
+    grafana_cloud_username: str,
+    grafana_cloud_token: str,
+    bssid_rules: str,
+    wifi_forward_to: str,
+) -> str:
+    """Generate Alloy configuration content."""
+    return f"""
 // Prometheus scrape configuration for local services
 prometheus.scrape "videonode" {{
   targets = [{{
@@ -151,7 +88,7 @@ prometheus.relabel "add_hostname" {{
 prometheus.remote_write "metrics_hosted_prometheus" {{
    endpoint {{
       name = "hosted-prometheus"
-      url  = "{GRAFANA_CLOUD_URL}"
+      url  = "{grafana_cloud_url}"
 
       send_exemplars = false
       send_native_histograms = false
@@ -167,29 +104,24 @@ prometheus.remote_write "metrics_hosted_prometheus" {{
       }}
 
       basic_auth {{
-        username = "{GRAFANA_CLOUD_USERNAME}"
-        password = "{GRAFANA_CLOUD_TOKEN}"
+        username = "{grafana_cloud_username}"
+        password = "{grafana_cloud_token}"
       }}
    }}
 }}
 """
 
-files.put(
-    name="Create Alloy configuration",
-    dest=f"{ALLOY_DIR}/config.alloy",
-    src=StringIO(alloy_config_content),
-    mode="644",
-)
 
-# Create Alloy systemd user service
-alloy_service_content = f"""[Unit]
+def _get_systemd_service(alloy_dir: str) -> str:
+    """Generate systemd service content."""
+    return f"""[Unit]
 Description=Grafana Alloy Metrics Collector
 After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory={ALLOY_DIR}
-ExecStart={ALLOY_DIR}/alloy run --server.http.listen-addr=0.0.0.0:12345 {ALLOY_DIR}/config.alloy
+WorkingDirectory={alloy_dir}
+ExecStart={alloy_dir}/alloy run --server.http.listen-addr=0.0.0.0:12345 {alloy_dir}/config.alloy
 Restart=on-failure
 RestartSec=10
 
@@ -201,31 +133,129 @@ LimitNPROC=32768
 WantedBy=default.target
 """
 
-# Create systemd user directory
-files.directory(
-    name="Ensure systemd user directory exists",
-    path=f"{USER_HOME}/.config/systemd/user",
-)
 
-files.put(
-    name="Create Alloy systemd user service",
-    dest=f"{USER_HOME}/.config/systemd/user/alloy.service",
-    src=StringIO(alloy_service_content),
-    mode="644",
-)
+@deploy("Setup Grafana Alloy")
+def install_alloy(
+    grafana_cloud_token: str,
+    grafana_cloud_username: str,
+    grafana_cloud_url: str,
+) -> None:
+    """Install and configure Grafana Alloy for metrics collection."""
+    user_home = host.get_fact(Home)
+    alloy_dir = f"{user_home}/alloy"
 
-# Reload systemd and start service
-server.shell(
-    name="Reload systemd daemon and enable/start Alloy service",
-    commands=[
-        "systemctl --user daemon-reload",
-        "systemctl --user enable alloy.service",
-        "systemctl --user restart alloy.service",
-    ],
-)
+    # Check for BSSID mappings
+    bssid_rules = ""
+    wifi_forward_to = "prometheus.relabel.add_hostname.receiver"
+    if BSSID_MAPPINGS_FILE.exists():
+        logger.info(f"Found BSSID mappings file at {BSSID_MAPPINGS_FILE}")
+        with open(BSSID_MAPPINGS_FILE, "r") as f:
+            bssid_rules = f.read()
+        wifi_forward_to = "prometheus.relabel.wifi_bssid_enrichment.receiver"
 
-# Verify service status
-server.shell(
-    name="Check Alloy service status",
-    commands=["systemctl --user status alloy.service --no-pager"],
-)
+    files.directory(
+        name="Ensure Alloy directory exists",
+        path=alloy_dir,
+    )
+
+    # Check current version
+    alloy_file = host.get_fact(File, path=f"{alloy_dir}/alloy")
+    current_version = None
+    if alloy_file:
+        version_output = host.get_fact(
+            Command,
+            command=f"{alloy_dir}/alloy --version 2>/dev/null | awk '{{print $3}}' | head -1",
+        )
+        if version_output:
+            current_version = version_output.strip()
+
+    needs_download = current_version != ALLOY_VERSION
+    if not needs_download:
+        logger.info(f"Alloy {ALLOY_VERSION} already installed, skipping download")
+
+    download = files.download(
+        name="Download Alloy ARM64 binary",
+        src=f"https://github.com/grafana/alloy/releases/download/{ALLOY_VERSION}/alloy-linux-arm64.zip",
+        dest="/tmp/alloy-linux-arm64.zip",
+        _if=lambda: needs_download,
+    )
+
+    server.shell(
+        name="Extract and install Alloy",
+        commands=[
+            "unzip -o /tmp/alloy-linux-arm64.zip -d /tmp",
+            f"mv /tmp/alloy-linux-arm64 {alloy_dir}/alloy",
+            f"chmod +x {alloy_dir}/alloy",
+        ],
+        _if=download.did_change,
+    )
+
+    files.file(
+        name="Remove Alloy archive",
+        path="/tmp/alloy-linux-arm64.zip",
+        present=False,
+        _if=download.did_change,
+    )
+
+    config_content = _get_alloy_config(
+        grafana_cloud_url,
+        grafana_cloud_username,
+        grafana_cloud_token,
+        bssid_rules,
+        wifi_forward_to,
+    )
+
+    config_put = files.put(
+        name="Create Alloy configuration",
+        dest=f"{alloy_dir}/config.alloy",
+        src=StringIO(config_content),
+        mode="644",
+    )
+
+    files.directory(
+        name="Ensure systemd user directory exists",
+        path=f"{user_home}/.config/systemd/user",
+    )
+
+    service_put = files.put(
+        name="Create Alloy systemd user service",
+        dest=f"{user_home}/.config/systemd/user/alloy.service",
+        src=StringIO(_get_systemd_service(alloy_dir)),
+        mode="644",
+    )
+
+    from pyinfra.operations.util import any_changed
+
+    server.shell(
+        name="Reload systemd daemon and enable/start Alloy service",
+        commands=[
+            "systemctl --user daemon-reload",
+            "systemctl --user enable alloy.service",
+            "systemctl --user restart alloy.service",
+        ],
+        _if=any_changed(config_put, service_put, download),
+    )
+
+    server.shell(
+        name="Check Alloy service status",
+        commands=["systemctl --user status alloy.service --no-pager"],
+    )
+
+
+if __name__ == "__main__":
+    token = host.data.get("grafana_cloud_token")
+    username = host.data.get("grafana_cloud_username")
+    url = host.data.get("grafana_cloud_url")
+
+    if not all([token, username, url]):
+        logger.error(
+            "Missing Grafana Cloud config! Required --data args: "
+            "grafana_cloud_token, grafana_cloud_username, grafana_cloud_url"
+        )
+        exit(1)
+
+    install_alloy(
+        grafana_cloud_token=str(token),
+        grafana_cloud_username=str(username),
+        grafana_cloud_url=str(url),
+    )

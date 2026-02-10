@@ -6,91 +6,80 @@ Usage:
     pyinfra @local deploys/hardware/rockchip/mpp.py --data rebuild=true
 """
 
-from typing import TYPE_CHECKING
-
+from pyinfra.api.deploy import deploy
 from pyinfra.context import host
-from pyinfra.operations import apt, files, server
-from pyinfra.facts.files import File
 from pyinfra.facts.server import Home
-
-if TYPE_CHECKING:
-    pass
+from pyinfra.operations import apt, files, server
 
 from videonode_sbc_config.deploys.utils import get_build_dependencies, get_parallel_jobs
 
-# Get home directory from remote host
-USER_HOME = host.get_fact(Home)
+MPP_VERSION = "1.0.10"
+MPP_REPO = "https://github.com/HermanChen/mpp.git"
 
-# Build paths as constants
-BUILD_BASE = f"{USER_HOME}/dev"
-BUILD_DIR = f"{BUILD_BASE}/rkmpp"
-BUILD_PATH = f"{BUILD_DIR}/build"
-PARALLEL_JOBS = get_parallel_jobs()
 
-# Check for rebuild flag from command line
-REBUILD = host.data.get("rebuild", False)
+@deploy("Install Rockchip MPP")
+def install_mpp(rebuild: bool = False) -> None:
+    """Install Rockchip Media Process Platform libraries."""
+    user_home = host.get_fact(Home)
+    build_base = f"{user_home}/dev"
+    build_dir = f"{build_base}/rkmpp"
+    build_path = f"{build_dir}/build"
+    parallel_jobs = get_parallel_jobs()
 
-# Check if MPP is already installed by looking for mpp_info_test binary
-mpp_installed = host.get_fact(File, "/usr/local/bin/mpp_info_test")
-
-if REBUILD or not mpp_installed:
-    # Install build dependencies (needs sudo for apt)
-    apt.packages(
+    deps = apt.packages(
         name="Install MPP build dependencies",
         packages=get_build_dependencies("base", "mpp"),
         update=True,
-        _sudo=True,
-        _ignore_errors=False,
     )
 
-    # Ensure build directory exists
     files.directory(
         name="Create MPP build directory",
-        path=BUILD_BASE,
+        path=build_base,
+        _if=deps.did_succeed,
     )
 
-    # Remove existing MPP directory to ensure clean state
     files.directory(
         name="Remove existing MPP directory if present",
-        path=BUILD_DIR,
+        path=build_dir,
         present=False,
+        _if=deps.did_succeed,
     )
 
-    # Shallow clone MPP repository at specific tag (HermanChen fork with fixes)
-    server.shell(
+    clone = server.shell(
         name="Clone Rockchip MPP repository",
-        commands=[
-            f"git clone --depth 1 --branch 1.0.10 https://github.com/HermanChen/mpp.git {BUILD_DIR}"
-        ],
-        _ignore_errors=False,
+        commands=[f"git clone --depth 1 --branch {MPP_VERSION} {MPP_REPO} {build_dir}"],
+        _if=deps.did_succeed,
+        _retries=2,  # type: ignore[call-arg]
+        _retry_delay=5,  # type: ignore[call-arg]
     )
 
-    # Create build directory
     files.directory(
         name="Create MPP cmake build directory",
-        path=BUILD_PATH,
+        path=build_path,
+        _if=clone.did_succeed,
     )
 
-    # Configure MPP with cmake
-    server.shell(
+    configure = server.shell(
         name="Configure MPP with cmake",
         commands=[
-            f"cd {BUILD_PATH} && cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_TEST=OFF .."
+            f"cd {build_path} && cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_TEST=OFF .."
         ],
-        _ignore_errors=False,
+        _if=clone.did_succeed,
     )
 
-    # Build MPP
-    server.shell(
+    build = server.shell(
         name="Build MPP libraries",
-        commands=[f"cd {BUILD_PATH} && make -j{PARALLEL_JOBS}"],
-        _ignore_errors=False,
+        commands=[f"cd {build_path} && make -j{parallel_jobs}"],
+        _if=configure.did_succeed,
     )
 
-    # Install MPP (needs sudo for system install)
     server.shell(
         name="Install MPP libraries",
-        commands=[f"cd {BUILD_PATH} && make install", "ldconfig"],
-        _sudo=True,
-        _ignore_errors=False,
+        commands=[f"cd {build_path} && make install", "ldconfig"],
+        _if=build.did_succeed,
     )
+
+
+if __name__ == "__main__":
+    rebuild = bool(host.data.get("rebuild", False))
+    install_mpp(rebuild=rebuild, _sudo=True)
